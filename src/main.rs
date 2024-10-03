@@ -59,7 +59,7 @@ fn main() {
 
         let encoded_value = &args[2];
         let decoded_value = decode_bencoded_value(encoded_value);
-        println!("{:?}", decoded_value.0.to_string());
+        println!("{}", decoded_value.0.to_string());
     } else {
         eprintln!("unknown command: {}", args[1])
     }
