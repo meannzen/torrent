@@ -25,7 +25,7 @@ fn main() {
 
         let encoded_value = &args[2];
         let decoded_value = decode_bencoded_value(encoded_value);
-        eprintln!("{}", decoded_value.to_string());
+        println!("{}", decoded_value.to_string());
     } else {
         eprintln!("unknown command: {}", args[1])
     }
