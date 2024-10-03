@@ -5,18 +5,46 @@ use std::{env, usize};
 // use serde_bencode
 
 #[allow(dead_code)]
-fn decode_bencoded_value(encoded_value: &str) -> serde_json::Value {
-    if let Some(number) = encoded_value
-        .strip_prefix("i")
-        .and_then(|rest| rest.split_once("e"))
-        .and_then(|(digit, _)| digit.parse::<i64>().ok())
-    {
-        return number.into();
-    } else if let Some((len, rest)) = encoded_value.split_once(":") {
-        if let Ok(len) = len.parse::<usize>() {
-            return serde_json::Value::String(rest[..len].to_string());
+fn decode_bencoded_value(encoded_value: &str) -> (serde_json::Value, &str) {
+    let first = encoded_value.chars().next();
+
+    match first {
+        Some('l') => {
+            let mut values = Vec::new();
+            let mut rest = encoded_value.split_at(1).1;
+            while !rest.is_empty() && !rest.starts_with('e') {
+                let (value, remainder) = decode_bencoded_value(rest);
+                values.push(value);
+                rest = remainder;
+            }
+
+            return (values.into(), &rest[1..]);
         }
+        Some('i') => {
+            if let Some((number, rest)) =
+                encoded_value
+                    .split_at(1)
+                    .1
+                    .split_once('e')
+                    .and_then(|(digit, rest)| {
+                        let n: i64 = digit.parse().ok()?;
+                        Some((n, rest))
+                    })
+            {
+                return (number.into(), rest);
+            }
+        }
+        Some('0'..='9') => {
+            if let Some((string, rest)) = encoded_value.split_once(":").and_then(|(len, last)| {
+                let len: usize = len.parse().ok()?;
+                Some((last[..len].to_string(), &last[len..]))
+            }) {
+                return (string.into(), rest);
+            }
+        }
+        _ => {}
     }
+
     panic!("Unhandled encoded value: {}", encoded_value)
 }
 
@@ -31,7 +59,7 @@ fn main() {
 
         let encoded_value = &args[2];
         let decoded_value = decode_bencoded_value(encoded_value);
-        println!("{}", decoded_value.to_string());
+        println!("{:?}", decoded_value.0.to_string());
     } else {
         eprintln!("unknown command: {}", args[1])
     }
