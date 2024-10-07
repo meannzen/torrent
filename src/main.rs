@@ -1,6 +1,7 @@
 use anyhow::Context;
 use clap::{Parser, Subcommand};
 use core::panic;
+use peers::Peers;
 use serde::{de::Visitor, Deserialize, Serialize};
 use sha1::{Digest, Sha1};
 use std::path::PathBuf;
@@ -10,6 +11,19 @@ use std::path::PathBuf;
 struct Torrent {
     announce: String,
     info: Info,
+}
+
+impl Torrent {
+    fn info_hash(&self) -> [u8; 20] {
+        let info_encoded =
+            serde_bencode::to_bytes(&self.info).expect("re-encode info section should be fine");
+        let mut hasher = Sha1::new();
+        hasher.update(&info_encoded);
+        hasher
+            .finalize()
+            .try_into()
+            .expect("Generice Array<_, 20> ==[_;20]")
+    }
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -140,9 +154,11 @@ struct Args {
 enum Command {
     Decode { value: String },
     Info { torrent: PathBuf },
+    Peers { torrent: PathBuf },
 }
 
-fn main() -> anyhow::Result<()> {
+#[tokio::main]
+async fn main() -> anyhow::Result<()> {
     let args = Args::parse();
     match args.cmd {
         Command::Decode { value } => {
@@ -158,11 +174,7 @@ fn main() -> anyhow::Result<()> {
 
             println!("Tracker URL: {}", t.announce);
             println!("Length: {}", t.info.length);
-
-            let info_encode = serde_bencode::to_bytes(&t.info).context("re-encode info section")?;
-            let mut hasher = Sha1::new();
-            hasher.update(&info_encode);
-            let info_hash = hasher.finalize();
+            let info_hash = t.info_hash();
             println!("Info Hash: {}", hex::encode(&info_hash));
             println!("Piece Length: {}", t.info.plength);
             println!("Piece Hashes:");
@@ -170,7 +182,125 @@ fn main() -> anyhow::Result<()> {
                 println!("{}", hex::encode(&h));
             }
         }
+
+        Command::Peers { torrent } => {
+            let dot_torrent = std::fs::read(torrent).context("read torrent file")?;
+            let t: Torrent =
+                serde_bencode::from_bytes(&dot_torrent).context("parse torrent file")?;
+            let info_hash = t.info_hash();
+            let request = TrackerRequest {
+                peer_id: String::from("00112233445566778899"),
+                port: 6881,
+                uploaded: 0,
+                downloaded: 0,
+                left: t.info.length,
+                compact: 1,
+            };
+
+            let url_params = serde_urlencoded::to_string(&request).context("url-encode")?;
+            let tracker_url = format!(
+                "{}?{}&info_hash={}",
+                t.announce,
+                url_params,
+                &urlencode(&info_hash)
+            );
+
+            let response = reqwest::get(tracker_url).await.context("query tracker")?;
+            let response = response.bytes().await.context("fetch tracker")?;
+            let response: TrackerResponse =
+                serde_bencode::from_bytes(&response).context("parse tracker")?;
+
+            for peer in &response.peers.0 {
+                println!("{}:{}", peer.ip(), peer.port());
+            }
+        }
     }
 
     Ok(())
+}
+
+fn urlencode(t: &[u8; 20]) -> String {
+    let mut encoded = String::with_capacity(3 * t.len());
+    for &byte in t {
+        encoded.push('%');
+        encoded.push_str(&hex::encode(&[byte]));
+    }
+
+    encoded
+}
+
+mod peers {
+    use std::net::{Ipv4Addr, SocketAddrV4};
+
+    use serde::{de::Visitor, Deserialize, Serialize};
+    #[derive(Debug, Clone)]
+    pub struct Peers(pub Vec<SocketAddrV4>);
+
+    struct PeersVisitor;
+    impl<'d> Visitor<'d> for PeersVisitor {
+        type Value = Peers;
+        fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+            formatter.write_str("6 bystes, the first 4 bystes are a peer's IP address and the last 2 are a peer's port number")
+        }
+
+        fn visit_bytes<E>(self, v: &[u8]) -> Result<Self::Value, E>
+        where
+            E: serde::de::Error,
+        {
+            if v.len() % 6 != 0 {
+                return Err(E::custom(format!("length is {}", v.len())));
+            }
+            Ok(Peers(
+                v.chunks_exact(6)
+                    .map(|slice| {
+                        SocketAddrV4::new(
+                            Ipv4Addr::new(slice[0], slice[1], slice[2], slice[3]),
+                            u16::from_be_bytes([slice[4], slice[5]]),
+                        )
+                    })
+                    .collect(),
+            ))
+        }
+    }
+
+    impl<'d> Deserialize<'d> for Peers {
+        fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+        where
+            D: serde::Deserializer<'d>,
+        {
+            deserializer.deserialize_bytes(PeersVisitor)
+        }
+    }
+
+    impl Serialize for Peers {
+        fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+        where
+            S: serde::Serializer,
+        {
+            let mut single_slice = Vec::with_capacity(6 * self.0.len());
+            for peer in &self.0 {
+                single_slice.extend(peer.ip().octets());
+                single_slice.extend(peer.port().to_be_bytes());
+            }
+
+            serializer.serialize_bytes(&single_slice)
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct TrackerRequest {
+    peer_id: String,
+    port: u16,
+    uploaded: usize,
+    downloaded: usize,
+    left: usize,
+    compact: u8,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[allow(dead_code)]
+struct TrackerResponse {
+    interval: usize,
+    peers: Peers,
 }
