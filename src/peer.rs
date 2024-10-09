@@ -1,4 +1,3 @@
-
 use serde::{de::Visitor, Deserialize, Serialize};
 use std::net::{Ipv4Addr, SocketAddrV4};
 #[derive(Debug, Clone)]
