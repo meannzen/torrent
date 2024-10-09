@@ -25,7 +25,21 @@ pub struct Info {
     #[serde(rename = "piece length")]
     pub plength: usize,
     pub pieces: Hashes,
+    #[serde(flatten)]
+    pub keys: Keys,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(untagged)]
+pub enum Keys {
+    SingleFile { length: usize },
+    MultiFile { file: Vec<File> },
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct File {
     pub length: usize,
+    pub path: Vec<String>,
 }
 
 #[derive(Debug, Clone)]
