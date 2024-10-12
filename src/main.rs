@@ -13,10 +13,25 @@ struct Args {
 
 #[derive(Subcommand, Debug)]
 enum Command {
-    Decode { value: String },
-    Info { torrent: PathBuf },
-    Peers { torrent: PathBuf },
-    Handshake { torrent: PathBuf, peer: String },
+    Decode {
+        value: String,
+    },
+    Info {
+        torrent: PathBuf,
+    },
+    Peers {
+        torrent: PathBuf,
+    },
+    Handshake {
+        torrent: PathBuf,
+        peer: String,
+    },
+    DownloadPiece {
+        #[arg(short)]
+        path: PathBuf,
+        torrent: PathBuf,
+        piece: usize,
+    },
 }
 
 #[tokio::main]
@@ -124,6 +139,14 @@ async fn main() -> anyhow::Result<()> {
             }
 
             println!("Peer ID: {}", hex::encode(handshake.peer_id));
+        }
+        Command::DownloadPiece {
+            path: _,
+            torrent: _,
+            piece: _,
+        } => {
+            // I don't know how to implment this just learn first
+            todo!()
         }
     }
 
