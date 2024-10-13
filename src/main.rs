@@ -12,6 +12,7 @@ struct Args {
 }
 
 #[derive(Subcommand, Debug)]
+#[clap(rename_all = "snake_case")]
 enum Command {
     Decode {
         value: String,
@@ -28,7 +29,7 @@ enum Command {
     },
     DownloadPiece {
         #[arg(short)]
-        path: PathBuf,
+        output: PathBuf,
         torrent: PathBuf,
         piece: usize,
     },
@@ -141,12 +142,39 @@ async fn main() -> anyhow::Result<()> {
             println!("Peer ID: {}", hex::encode(handshake.peer_id));
         }
         Command::DownloadPiece {
-            path: _,
-            torrent: _,
-            piece: _,
+            output,
+            torrent,
+            piece,
         } => {
-            // I don't know how to implment this just learn first
-            todo!()
+            let dot_torrent = std::fs::read(torrent).context("read torrent file")?;
+            let t: Torrent =
+                serde_bencode::from_bytes(&dot_torrent).context("parse torrent file")?;
+            let length = if let Keys::SingleFile { length } = t.info.keys {
+                length
+            } else {
+                todo!()
+            };
+
+            let info_hash = t.info_hash();
+            let request = TrackerRequest {
+                peer_id: String::from("00112233445566778899"),
+                port: 6881,
+                uploaded: 0,
+                downloaded: 0,
+                left: length,
+                compact: 1,
+            };
+
+            let url_params =
+                serde_urlencoded::to_string(&request).context("url-encode parameter")?;
+            let tracker_url = format!(
+                "{}?{}&info_hash={}",
+                t.announce,
+                url_params,
+                &urlencode(&info_hash)
+            );
+
+            let _respone = reqwest::get(tracker_url).await.context("query tracker")?;
         }
     }
 
